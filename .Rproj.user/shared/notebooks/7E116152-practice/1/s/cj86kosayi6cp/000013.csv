@@ -1,0 +1,10 @@
+"0","trend <- top10 %>%
+  select(country, all_of(year_cols)) %>%
+  pivot_longer(all_of(year_cols), names_to = ""year"", values_to = ""pop"") %>%
+  mutate(year = as.integer(str_extract(year, ""\\d{4}""))) %>%
+  filter(year >= 1990)
+"
+"1","[1m[33mError[39m in `pivot_longer()`:[22m
+[38;5;232m[33m![38;5;232m `cols` must select at least one column.[39m
+[90mRun `]8;;x-r-run:rlang::last_trace()rlang::last_trace()]8;;` to see where the error occurred.[39m
+"

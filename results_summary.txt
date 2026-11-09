@@ -1,0 +1,12 @@
+rows_pop=234
+cols_pop=17
+matched_countries=172
+pearson_raw=0.015
+spearman=-0.088
+pearson_log=-0.033
+lm_slope=-0.171
+lm_r2=0.001
+top_continent=Asia|261.42
+third_continent=North America|79.57
+last_continent=South America|29.42
+top10=China; India; United States; Indonesia; Pakistan; Nigeria; Brazil; Bangladesh; Russia; Mexico

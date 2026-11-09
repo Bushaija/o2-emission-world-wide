@@ -1,0 +1,6 @@
+"0","glue::glue(""The dataset has {nrow(population_raw)} rows (countries/territories) "",
+           ""and {ncol(population_raw)} columns (variables)."")
+"
+"1","The dataset has 234 rows (countries/territories) and 17 columns (variables)."
+"1","
+"

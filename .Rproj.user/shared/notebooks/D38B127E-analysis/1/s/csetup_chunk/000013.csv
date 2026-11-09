@@ -1,0 +1,25 @@
+"0","# install all packages
+install.packages(""corrplot"")
+"
+"2","G2;WARNING: Rtools is required to build R packages but is not currently installed. Please download and install the appropriate version of Rtools before proceeding:
+
+https://cran.rstudio.com/bin/windows/Rtools/g
+"
+"2","trying URL 'https://cran.rstudio.com/bin/windows/contrib/4.6/corrplot_0.95.zip'
+"
+"2","Content type 'application/zip'"
+"2"," length 3827500 bytes (3.7 MB)
+"
+"2","downloaded 3.7 MB
+
+"
+"1","package ‘corrplot’ successfully unpacked and MD5 sums checked
+"
+"1","
+"
+"1",""
+"1","The downloaded binary packages are in
+	C:\Users\HP\AppData\Local\Temp\RtmpW66uAM\downloaded_packages"
+"1",""
+"1","
+"

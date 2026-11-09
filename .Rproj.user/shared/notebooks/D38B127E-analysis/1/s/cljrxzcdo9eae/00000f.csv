@@ -1,0 +1,6 @@
+"0","glue::glue(""Winsorised (IQR-capped) copies created for: "",
+           ""{paste(rate_vars, collapse = ', ')}."")
+"
+"1","Winsorised (IQR-capped) copies created for: density_per_km2, growth_rate, world_population_percentage."
+"1","
+"

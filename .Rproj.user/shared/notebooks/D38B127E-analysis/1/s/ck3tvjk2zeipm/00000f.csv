@@ -1,0 +1,6 @@
+"0","glue::glue(""Median raw growth_rate = {round(med_gr, 4)}  ->  "",
+           ""interpreted as {ifelse(med_gr > 0.5 & med_gr < 1.5, 'annual factor (r = rate - 1)', ifelse(med_gr >= 1.5, 'percentage (r = rate / 100)', 'fraction (r = rate)'))}."")
+"
+"1","Median raw growth_rate = 1.0079  ->  interpreted as annual factor (r = rate - 1)."
+"1","
+"

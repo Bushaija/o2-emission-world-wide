@@ -1,0 +1,7 @@
+"0","# confirm no missing values remain
+sum(is.na(population))
+"
+"1","[1]"
+"1"," 0"
+"1","
+"

@@ -1,0 +1,6 @@
+"0","cat(sprintf(""3. **Lowest-ranked continent:** %s, with a total of %.2f metric tons per capita.\n\n"",
+            rl$continent, rl$total_co2_2019))
+"
+"1","3. **Lowest-ranked continent:** South America, with a total of 29.42 metric tons per capita.
+
+"

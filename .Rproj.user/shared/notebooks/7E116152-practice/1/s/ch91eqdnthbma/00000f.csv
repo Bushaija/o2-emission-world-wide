@@ -1,0 +1,6 @@
+"0","glue::glue(""Duplicate rows removed: {n_before - n_after}. "",
+           ""Rows remaining: {n_after}."")
+"
+"1","Duplicate rows removed: 0. Rows remaining: 234."
+"1","
+"

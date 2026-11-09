@@ -1,0 +1,510 @@
+install.packages("tidyverse")
+install.packages("ggplot2")
+
+library(tidyverse)
+library(scales) 
+library(knitr)  
+
+pal_main <- "#2C7FB8" 
+
+# task 4.1 Loading the data
+```{r load-data}
+pop_path <- "./data/world_population.csv"
+co2_path <- "./data/CO2_emission.csv"
+
+population_raw <- read_csv(pop_path, show_col_types = FALSE)
+co2_raw <- read_csv(co2_path, show_col_types = FALSE)
+```
+
+# Task 4.2 - Exploratory Data Analysis (World population dataset)
+
+## Variable names
+```{r eda-names}
+names(population_raw)
+```
+
+## first 5 rows
+
+```{r eda-head}
+head(population_raw, 5)
+```
+
+## last 10 rows
+
+```{r eda-tail}
+tail(population_raw, 10)
+```
+
+## Data types
+
+```{r eda-types}
+View(
+  tibble(
+    Variable  = names(population_raw),
+    Data_type = map_chr(population_raw, ~ class(.x)[1])
+  ), 
+  title = "Variable Types"
+)
+```
+
+## shape of dataset
+
+```{r eda-shape}
+dim(population_raw)
+glue::glue("The dataset has {nrow(population_raw)} rows (countries/territories) ",
+           "and {ncol(population_raw)} columns (variables).")
+```
+
+## Tidy column names
+
+```{r}
+library(stringr)
+
+# Standardize names using tidyverse string manipulation
+population <- population_raw %>% 
+  rename_with(~ .x %>% 
+                str_trim() %>%                 # Remove leading/trailing spaces
+                str_replace_all("\\s+", "_") %>% # Replace spaces/periods with underscores
+                str_replace_all("[\\(\\).,]", "") %>% # Remove punctuation like brackets
+                str_to_lower()                 # Convert everything to lowercase
+  )
+
+# Verify the changes
+names(population)
+```
+
+## Drop duplicate rows
+
+```{r eda-dupes}
+n_before <- nrow(population)
+population <- population %>% distinct()
+n_after <- nrow(population)
+glue::glue("Duplicate rows removed: {n_before - n_after}. ",
+           "Rows remaining: {n_after}.")
+```
+
+## Missing values per variable
+
+
+```{r eda-missing}
+missing_tbl <- data.frame(
+  variable  = names(population),
+  n_missing = colSums(is.na(population))
+)
+
+missing_tbl <- missing_tbl[order(-missing_tbl$n_missing), ]
+rownames(missing_tbl) <- NULL     # reset row numbers
+
+missing_tbl                       # print it
+```
+
+## Identify the quantitative variables
+
+```{r eda-quant}
+quant_vars <- population %>%
+  select(where(is.numeric)) %>%
+  names()
+quant_vars
+```
+
+## Outlier check with box plots
+
+Box plots of the standardised (z-scored) quantitative variables let us compare
+spread on a single axis and spot extreme values.
+
+```{r eda-boxplots, fig.height=6}
+pop_long <- population %>%
+  select(all_of(quant_vars)) %>%
+  mutate(across(everything(), ~ as.numeric(scale(.x)))) %>%   # z-scores
+  pivot_longer(everything(), names_to = "variable", values_to = "z")
+
+ggplot(pop_long, aes(x = reorder(variable, z, FUN = median, na.rm = TRUE), y = z)) +
+  geom_boxplot(fill = pal_main, alpha = 0.6, outlier.colour = "firebrick",
+               outlier.alpha = 0.6) +
+  coord_flip() +
+  labs(title = "Box plots of quantitative variables (standardised)",
+       subtitle = "Points in red lie beyond 1.5 × IQR",
+       x = NULL, y = "z-score")
+
+```
+
+## Dealing with missing values and outliers
+
+**Missing values.** Numeric columns are imputed with the **median**, which is
+robust to skew; any missing categorical label is set to `"Unknown"`.
+
+```{r eda-impute}
+population <- population %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.na(.x), median(.x, na.rm = TRUE), .x))) %>%
+  mutate(across(where(is.character), ~ ifelse(is.na(.x), "Unknown", .x)))
+
+# confirm no missing values remain
+sum(is.na(population))
+```
+
+**Outliers.** For this dataset the extreme values in the *population* columns
+are **genuine** (China and India really are an order of magnitude larger than
+most countries), so they are retained for the ranking tasks. For the
+*rate-type* variables used later in the correlation study — `density`,
+`growth_rate` and `world_population_percentage` — we apply **IQR capping
+(winsorising)** so that a handful of extreme territories do not dominate the
+correlations. The capped copies are stored in new `*_capped` columns and the
+originals are left untouched.
+
+```{r eda-winsor}
+cap_iqr <- function(x) {
+  q <- quantile(x, c(.25, .75), na.rm = TRUE)
+  iqr <- diff(q)
+  lo <- q[1] - 1.5 * iqr
+  hi <- q[2] + 1.5 * iqr
+  pmin(pmax(x, lo), hi)
+}
+
+rate_vars <- intersect(c("density_per_km2", "growth_rate",
+                         "world_population_percentage"), names(population))
+
+population <- population %>%
+  mutate(across(all_of(rate_vars), cap_iqr, .names = "{.col}_capped"))
+
+glue::glue("Winsorised (IQR-capped) copies created for: ",
+           "{paste(rate_vars, collapse = ', ')}.")
+```
+---
+
+# Task 4.3 — New variable: projected 2030 population
+
+The exponential population-growth model is
+
+$$N_t = P\,e^{rt},$$
+
+where $P$ is the present population (end of **2022**), $r$ the growth rate,
+$t$ the number of years ahead, and $e \approx 2.71828$. We project to
+**2030**, so $t = 2030 - 2022 = 8$.
+
+The raw `growth_rate` column is inspected first, because the dataset may store
+it either as an **annual factor** (values near `1.00`), as a **fraction**
+(e.g. `0.021`) or as a **percentage** (e.g. `2.1`). The code converts whichever
+form is present into a continuous rate $r$.
+
+```{r proj-rate}
+# locate the 2022 population column
+pop_2022_col <- names(population)[str_detect(names(population), "2022")][1]
+med_gr <- median(population$growth_rate, na.rm = TRUE)
+
+r_vec <- dplyr::case_when(
+  med_gr > 0.5 & med_gr < 1.5 ~ population$growth_rate - 1,  # annual factor
+  med_gr >= 1.5               ~ population$growth_rate / 100, # percentage
+  TRUE                        ~ population$growth_rate        # already a fraction
+)
+
+glue::glue("Median raw growth_rate = {round(med_gr, 4)}  ->  ",
+           "interpreted as {ifelse(med_gr > 0.5 & med_gr < 1.5, 'annual factor (r = rate - 1)', ifelse(med_gr >= 1.5, 'percentage (r = rate / 100)', 'fraction (r = rate)'))}.")
+```
+```{r proj-compute}
+t_years <- 2030 - 2022
+
+population <- population %>%
+  mutate(
+    r = r_vec,
+    pop_2022 = .data[[pop_2022_col]],
+    projected_2030 = round(pop_2022 * exp(r * t_years))
+  )
+
+population %>%
+  select(country = matches("country"), continent,
+         pop_2022, growth_rate, r, projected_2030) %>%
+  arrange(desc(pop_2022)) %>%
+  head(10) %>%
+  kable(caption = "Projected 2030 population (top 10 countries by 2022 population)",
+        format.args = list(big.mark = ","))
+```
+
+---
+
+# Task 4.4 — Top-10 most populous countries: values and plots
+
+## 4.4.1 Top 10 by 2022 population
+
+```{r top10}
+country_col <- names(population)[str_detect(names(population), "country")][1]
+
+top10 <- population %>%
+  arrange(desc(pop_2022)) %>%
+  slice(1:10) %>%
+  mutate(country = .data[[country_col]])
+
+top10_names <- top10$country
+top10_names
+```
+     
+```{r top10-bar}
+ggplot(top10, aes(x = reorder(country, pop_2022), y = pop_2022)) +
+  geom_col(fill = pal_main) +
+  geom_text(aes(label = scales::label_number(scale_cut = cut_short_scale())(pop_2022)),
+            hjust = -0.1, size = 3.3) +
+  coord_flip() +
+  scale_y_continuous(labels = label_number(scale_cut = cut_short_scale()),
+                     expand = expansion(mult = c(0, 0.15))) +
+  labs(title = "Top 10 most populous countries, 2022",
+       x = NULL, y = "Population (2022)")
+```
+
+## 4.4.2 Population trend 1990–2022 for the top 10
+
+The population dataset reports census snapshots (1990, 2000, 2010, 2015, 2020,
+2022). We reshape those columns to long format and plot the trend.
+
+```{r top10-trend}
+year_cols <- names(population)[str_detect(names(population), "^x(19|20)\\d{2}_population$")]
+year_co
+
+trend <- top10 %>%
+  select(country, all_of(year_cols)) %>%
+  pivot_longer(all_of(year_cols), names_to = "year", values_to = "pop") %>%
+  mutate(year = as.integer(str_extract(year, "\\d{4}"))) %>%
+  filter(year >= 1990)
+
+ggplot(trend, aes(year, pop, colour = country)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 1.6) +
+  scale_y_continuous(labels = label_number(scale_cut = cut_short_scale())) +
+  scale_colour_brewer(palette = "Paired") +
+  labs(title = "Population trend of the 10 most populous countries, 1990–2022",
+       x = "Year", y = "Population", colour = NULL)
+```
+
+## 4.4.3 CO~2~ emission trend 1990–2019 for the same countries
+
+```{r co2-prep}
+co2 <- co2_raw %>% clean_names()
+
+# The CSV ships a duplicated 2019 column, which readr renames to x2019_34 /
+# x2019_35. Match the year anywhere in the name (not an exact x2019) and then
+# collapse any duplicate country-year cells by averaging, so 2019 is retained.
+co2_year_cols <- names(co2)[str_detect(names(co2), "^x(19|20)\\d{2}")]
+co2_country_col <- names(co2)[str_detect(names(co2), "country_name|country$")][1]
+
+co2_long <- co2 %>%
+  rename(country = all_of(co2_country_col)) %>%
+  select(country, all_of(co2_year_cols)) %>%
+  pivot_longer(all_of(co2_year_cols), names_to = "year", values_to = "co2_pc") %>%
+  mutate(year = as.integer(str_extract(year, "\\d{4}"))) %>%
+  group_by(country, year) %>%
+  summarise(co2_pc = mean(co2_pc, na.rm = TRUE), .groups = "drop") %>%
+  mutate(co2_pc = ifelse(is.nan(co2_pc), NA_real_, co2_pc))
+
+# match the top-10 country names (handles minor naming differences)
+name_fix <- c("United States" = "United States",
+              "Russia" = "Russian Federation",
+              "Egypt" = "Egypt, Arab Rep.")
+top10_co2_names <- recode(top10_names, !!!name_fix)
+
+co2_top10 <- co2_long %>%
+  filter(country %in% c(top10_names, top10_co2_names),
+         year >= 1990, year <= 2019)
+```
+
+```{r co2-trend}
+ggplot(co2_top10, aes(year, co2_pc, colour = country)) +
+  geom_line(linewidth = 0.9) +
+  scale_colour_brewer(palette = "Paired") +
+  labs(title = "CO2 emission trend of the 10 most populous countries, 1990–2019",
+       subtitle = "Metric tons per capita",
+       x = "Year", y = "CO2 (metric tons per capita)", colour = NULL)
+```
+
+---
+
+# Task 4.5 — Correlation analysis
+
+## 4.5.1 Correlations within the population dataset
+
+Correlations between **Area**, **Density**, **Growth rate** and **World
+population percentage** (using the IQR-capped rate variables), shown both as a
+numeric matrix and as a heatmap.
+
+```{r corr-pop}
+area_col <- names(population)[str_detect(names(population), "area")][1]
+
+corr_df <- population %>%
+  transmute(
+    Area        = .data[[area_col]],
+    Density     = density_per_km2_capped,
+    Growth_rate = growth_rate_capped,
+    World_pct   = world_population_percentage_capped
+  )
+
+corr_mat <- cor(corr_df, use = "complete.obs")
+round(corr_mat, 3) %>% kable(caption = "Correlation matrix (population variables)")
+```
+
+```{r corr-heatmap}
+corrplot(corr_mat, method = "color", type = "upper",
+         addCoef.col = "black", tl.col = "black", tl.srt = 45,
+         col = colorRampPalette(c("#D73027", "white", "#2C7FB8"))(200),
+         mar = c(0, 0, 1, 0), title = "Correlation heatmap: population variables")
+```
+
+## 4.5.2 Population vs CO~2~ emissions (merged data)
+
+The two datasets are merged on country name; we then keep **2022 population**
+and **2019 CO~2~ emissions** and study the relationship with a scatter plot,
+correlation coefficients and a simple linear regression.
+
+```{r merge}
+co2_2019 <- co2_long %>%
+  filter(year == 2019) %>%
+  select(country, co2_2019 = co2_pc)
+
+pop_small <- population %>%
+  transmute(country = .data[[country_col]],
+            continent,
+            pop_2022,
+            projected_2030)
+
+# normalise a few well-known name mismatches before joining
+norm_name <- function(x) {
+  x %>%
+    str_replace_all("United States of America", "United States") %>%
+    str_replace_all("Russian Federation", "Russia") %>%
+    str_replace_all("Egypt, Arab Rep.", "Egypt") %>%
+    str_replace_all("Iran, Islamic Rep.", "Iran") %>%
+    str_replace_all("Korea, Rep.", "South Korea") %>%
+    str_trim()
+}
+
+merged <- pop_small %>%
+  mutate(country = norm_name(country)) %>%
+  inner_join(co2_2019 %>% mutate(country = norm_name(country)), by = "country") %>%
+  filter(!is.na(co2_2019), !is.na(pop_2022))
+
+glue::glue("Countries successfully matched across both datasets: {nrow(merged)}")
+```
+
+```{r merge-scatter}
+ggplot(merged, aes(pop_2022, co2_2019)) +
+  geom_point(alpha = 0.6, colour = pal_main) +
+  geom_smooth(method = "lm", se = TRUE, colour = "firebrick") +
+  scale_x_log10(labels = label_number(scale_cut = cut_short_scale())) +
+  labs(title = "Population (2022) vs CO2 emissions (2019)",
+       subtitle = "Log scale on population; per-capita emissions",
+       x = "Population 2022 (log scale)",
+       y = "CO2 (metric tons per capita, 2019)")
+```
+
+```{r merge-corr}
+pear <- cor(merged$pop_2022, merged$co2_2019, method = "pearson")
+spear <- cor(merged$pop_2022, merged$co2_2019, method = "spearman")
+pear_log <- cor(log10(merged$pop_2022), merged$co2_2019, method = "pearson")
+
+tibble(
+  Measure = c("Pearson (raw)", "Spearman (rank)", "Pearson (log population)"),
+  Value   = round(c(pear, spear, pear_log), 3)
+) %>% kable(caption = "Association between 2022 population and 2019 CO2 per capita")
+
+lm_fit <- lm(co2_2019 ~ log10(pop_2022), data = merged)
+summary(lm_fit)
+```
+
+---
+
+# Task 4.6 — Comparing CO~2~ emissions across continents
+
+Using the merged data we sum the **2019 per-capita CO~2~ emissions** within each
+continent and compare them graphically.
+
+```{r continent}
+cont_co2 <- merged %>%
+  group_by(continent) %>%
+  summarise(total_co2_2019 = sum(co2_2019, na.rm = TRUE),
+            n_countries = n(), .groups = "drop") %>%
+  arrange(desc(total_co2_2019))
+
+cont_co2 %>% kable(caption = "Total 2019 CO2 (metric tons per capita) by continent",
+                   digits = 2)
+```
+
+```{r continent-plot}
+ggplot(cont_co2, aes(x = reorder(continent, total_co2_2019), y = total_co2_2019)) +
+  geom_col(fill = pal_main) +
+  geom_text(aes(label = round(total_co2_2019, 1)), hjust = -0.1, size = 3.3) +
+  coord_flip() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(title = "Total 2019 CO2 emissions by continent",
+       subtitle = "Sum of per-capita values across matched countries",
+       x = NULL, y = "Total CO2 (metric tons per capita)")
+```
+
+**Answers to the questions (computed from the data):**
+
+```{r continent-answers, echo=FALSE, results='asis'}
+r1 <- cont_co2 %>% slice(1)
+r3 <- cont_co2 %>% slice(3)
+rl <- cont_co2 %>% slice(n())
+
+cat(sprintf("1. **Highest 2019 CO2 emission:** %s (total %.2f metric tons per capita).\n\n",
+            r1$continent, r1$total_co2_2019))
+cat(sprintf("2. **Third-ranked continent:** %s, with a total of %.2f metric tons per capita.\n\n",
+            r3$continent, r3$total_co2_2019))
+cat(sprintf("3. **Lowest-ranked continent:** %s, with a total of %.2f metric tons per capita.\n\n",
+            rl$continent, rl$total_co2_2019))
+```
+
+```{r write-summary, include=FALSE}
+# Export the headline numbers so the LaTeX report can quote them exactly.
+summary_lines <- c(
+  sprintf("rows_pop=%d", nrow(population)),
+  sprintf("cols_pop=%d", ncol(population_raw)),
+  sprintf("matched_countries=%d", nrow(merged)),
+  sprintf("pearson_raw=%.3f", pear),
+  sprintf("spearman=%.3f", spear),
+  sprintf("pearson_log=%.3f", pear_log),
+  sprintf("lm_slope=%.3f", coef(lm_fit)[2]),
+  sprintf("lm_r2=%.3f", summary(lm_fit)$r.squared),
+  sprintf("top_continent=%s|%.2f", r1$continent, r1$total_co2_2019),
+  sprintf("third_continent=%s|%.2f", r3$continent, r3$total_co2_2019),
+  sprintf("last_continent=%s|%.2f", rl$continent, rl$total_co2_2019),
+  sprintf("top10=%s", paste(top10_names, collapse = "; "))
+)
+writeLines(summary_lines, file.path(getwd(), "results_summary.txt"))
+```
+
+---
+
+# Conclusion
+
+The analysis cleaned and prepared the World Population Dataset, projected each
+country's population to 2030 with the exponential growth model, identified and
+visualised the ten most populous countries and their population and CO~2~
+trends, and quantified the link between population and per-capita emissions
+through correlation and regression. The continent comparison summarises where
+per-capita emissions concentrate. Full narrative discussion, limitations and
+recommendations are provided in the accompanying LaTeX report.
+
+```{r session, echo=FALSE}
+sessionInfo()
+```
+
+```{r}
+check <- function(x) {
+  if(is.na(x)) {
+    print(paste(x, " is a missing value"))
+  }
+  if(x > 0) {
+    print(paste(x, " is greater than zero"))
+  } else {
+    print(paste(x, " is equal or less than zero"))
+  }
+}
+```
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,9 @@
+"0","tibble(
+  Measure = c(""Pearson (raw)"", ""Spearman (rank)"", ""Pearson (log population)""),
+  Value   = round(c(pear, spear, pear_log), 3)
+) %>% kable(caption = ""Association between 2022 population and 2019 CO2 per capita"")
+"
+"0","tibble("
+"0","  Measure = c(""Pearson (raw)"", ""Spearman (rank)"", ""Pearson (log population)""),"
+"0","  Value   = round(c(pear, spear, pear_log), 3)"
+"0",") %>% kable(caption = ""Association between 2022 population and 2019 CO2 per capita"")"

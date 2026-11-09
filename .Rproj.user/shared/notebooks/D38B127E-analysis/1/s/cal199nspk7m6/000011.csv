@@ -1,0 +1,9 @@
+"0","population %>%
+  select(country = matches(""country""), continent,
+         pop_2022, growth_rate, r, projected_2030) %>%
+  arrange(desc(pop_2022)) %>%
+  head(10) %>%
+  kable(caption = ""Projected 2030 population (top 10 countries by 2022 population)"",
+        format.args = list(big.mark = "",""))
+"
+"0",""
